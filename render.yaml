@@ -1,0 +1,50 @@
+# Render Blueprint - deploys backend + frontend from same repo
+# Reference: https://render.com/docs/blueprint-spec
+
+services:
+  # ─── BACKEND (NestJS API + WebSocket) ─────────────────────────────
+  - type: web
+    name: sidra-backend
+    runtime: node
+    rootDir: backend
+    plan: starter
+    buildCommand: "cd .. && npm install --workspaces --include-workspace-root && cd backend && npx prisma generate && npm run build"
+    startCommand: "npx prisma migrate deploy && npm run start:prod"
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false        # set this in Render dashboard (your Supabase URL)
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: "7d"
+      - key: PORT
+        value: "3001"
+      - key: CORS_ORIGIN
+        sync: false        # set to your Vercel URL after frontend deploys
+      # Add any other backend secrets here as sync:false
+
+  # ─── FRONTEND (Next.js) ──────────────────────────────────────────
+  # NOTE: Prefer hosting the frontend on Vercel — this is just a backup.
+  - type: web
+    name: sidra-frontend
+    runtime: node
+    rootDir: frontend
+    plan: starter
+    buildCommand: "cd .. && npm install --workspaces --include-workspace-root && cd frontend && npm run build"
+    startCommand: "npm run start"
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        value: https://sidra-backend.onrender.com
+      - key: NEXT_PUBLIC_WS_URL
+        value: wss://sidra-backend.onrender.com
+      - key: NEXT_PUBLIC_APP_NAME
+        value: SIDRA EXCHANGE
+      - key: NEXT_PUBLIC_SUPPORT_EMAIL
+        value: support@sidra.exchange
