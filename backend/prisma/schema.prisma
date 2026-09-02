@@ -1,0 +1,716 @@
+// ============================================================
+// SIDRA EXCHANGE - Prisma Schema
+// Database: Supabase PostgreSQL
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// Users
+// ============================================================
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  fullName        String?
+  phone           String?
+  country         String?
+  avatarUrl       String?
+  role            String    @default("USER") // USER | ADMIN | SUPER_ADMIN
+  status          String    @default("PENDING_VERIFICATION") // ACTIVE | INACTIVE | FROZEN | BLOCKED | PENDING_VERIFICATION
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+  twoFactorEnabled Boolean  @default(false)
+  lastLoginAt     DateTime?
+  lastLoginIp     String?
+  failedLoginAttempts Int   @default(0)
+  lockedUntil     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  wallets             Wallet[]
+  balances            Balance[]
+  transactions        WalletTransaction[]
+  deposits            Deposit[]
+  withdrawals         Withdrawal[]
+  sellOrders          Order[]        @relation("SellerOrders")
+  buyOrders           Order[]        @relation("BuyerOrders")
+  counterOffers       CounterOffer[] @relation("CounterOfferUser")
+  counterOffersReceived CounterOffer[] @relation("CounterOfferTarget")
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+  tradesAsSeller      Trade[]        @relation("TradeSeller")
+  tradesAsBuyer       Trade[]        @relation("TradeBuyer")
+  otps                Otp[]
+  sessions            Session[]
+  refreshTokens       RefreshToken[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  adminLogs           AdminLog[]
+  securityLogs        SecurityLog[]
+  withdrawalRequests  WithdrawalRequest[]
+  depositAddresses    DepositAddress[]
+
+  @@index([email])
+  @@index([status])
+  @@index([role])
+}
+
+// ============================================================
+// Wallets
+// ============================================================
+
+model Wallet {
+  id           String   @id @default(cuid())
+  userId       String
+  chain        String   // ETHEREUM | BASE
+  address      String   @unique
+  encryptedKey String
+  walletType   String   @default("SPOT") // SPOT | FUNDING
+  status       String   @default("ACTIVE") // ACTIVE | DISABLED | FROZEN
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balances   Balance[]
+  transactions WalletTransaction[]
+
+  @@unique([userId, chain, walletType])
+  @@index([userId])
+  @@index([chain])
+  @@index([address])
+}
+
+// ============================================================
+// Balances
+// ============================================================
+
+model Balance {
+  id         String   @id @default(cuid())
+  walletId   String
+  userId     String
+  chain      String
+  token      String   // ETH | USDT | USDC | SIDRA
+  available  Decimal  @db.Decimal(40, 18)
+  locked     Decimal  @default(0) @db.Decimal(40, 18)
+  total      Decimal  @db.Decimal(40, 18)
+  updatedAt  DateTime @updatedAt
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, token])
+  @@unique([userId, chain, token])
+  @@index([userId])
+  @@index([chain, token])
+}
+
+// ============================================================
+// Wallet Transactions (Internal Ledger)
+// ============================================================
+
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  userId      String
+  walletId    String
+  chain       String
+  token       String
+  type        String   // DEPOSIT | WITHDRAWAL | TRADE | FEE | MANUAL_CREDIT | MANUAL_DEBIT | INTERNAL_TRANSFER
+  status      String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | CANCELLED | CONFIRMED
+  amount      Decimal  @db.Decimal(40, 18)
+  fee         Decimal  @default(0) @db.Decimal(40, 18)
+  netAmount   Decimal  @db.Decimal(40, 18)
+  balanceAfter Decimal @db.Decimal(40, 18)
+  referenceId String?  // depositId, withdrawalId, tradeId, etc.
+  description String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([type])
+  @@index([status])
+  @@index([referenceId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Deposit Addresses
+// ============================================================
+
+model DepositAddress {
+  id        String   @id @default(cuid())
+  userId    String
+  chain     String
+  token     String
+  address   String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chain, token])
+  @@index([userId])
+  @@index([chain])
+  @@index([address])
+}
+
+// ============================================================
+// Deposits
+// ============================================================
+
+model Deposit {
+  id            String   @id @default(cuid())
+  userId        String
+  chain         String
+  token         String
+  amount        Decimal  @db.Decimal(40, 18)
+  txHash        String   @unique
+  fromAddress   String
+  toAddress     String
+  blockNumber   Int?
+  confirmations Int      @default(0)
+  status        String   @default("PENDING") // PENDING | CONFIRMED | COMPLETED | FAILED | IGNORED_BELOW_MIN
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([chain])
+  @@index([token])
+  @@index([status])
+  @@index([txHash])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Withdrawal Requests (pre-submission, prevents duplicates)
+// ============================================================
+
+model WithdrawalRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  chain       String
+  token       String
+  amount      Decimal  @db.Decimal(40, 18)
+  address     String
+  otpHash     String
+  otpExpiresAt DateTime
+  otpAttempts Int      @default(0)
+  maxAttempts Int      @default(5)
+  status      String   @default("PENDING") // PENDING | OTP_VERIFIED | COMPLETED | EXPIRED | FAILED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Withdrawals
+// ============================================================
+
+model Withdrawal {
+  id           String   @id @default(cuid())
+  userId       String
+  chain        String
+  token        String
+  amount       Decimal  @db.Decimal(40, 18)
+  fee          Decimal  @db.Decimal(40, 18)
+  netAmount    Decimal  @db.Decimal(40, 18)
+  address      String
+  txHash       String?  @unique
+  nonce        Int?
+  gasPrice     String?
+  status       String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | CANCELLED
+  failureReason String?
+  adminNote    String?
+  processedBy  String?
+  processedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  blockchainTransaction BlockchainTransaction?
+
+  @@index([userId])
+  @@index([chain])
+  @@index([token])
+  @@index([status])
+  @@index([txHash])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Orders (P2P Marketplace)
+// ============================================================
+
+model Order {
+  id          String   @id @default(cuid())
+  sellerId    String
+  buyerId     String?
+  chain       String
+  token       String
+  quantity    Decimal  @db.Decimal(40, 18)
+  price       Decimal  @db.Decimal(40, 18)
+  quoteToken  String   @default("USDT")
+  type        String   @default("SELL") // SELL | BUY
+  status      String   @default("OPEN") // OPEN | PENDING | COMPLETED | CANCELLED | EXPIRED | COUNTER_OFFERED
+  expiresAt   DateTime
+  cancelledAt DateTime?
+  cancelledBy String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  seller        User           @relation("SellerOrders", fields: [sellerId], references: [id])
+  buyer         User?          @relation("BuyerOrders", fields: [buyerId], references: [id])
+  counterOffers CounterOffer[]
+  trades        Trade[]
+  history       OrderHistory[]
+
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([chain])
+  @@index([token])
+  @@index([status])
+  @@index([createdAt])
+  @@index([expiresAt])
+}
+
+// ============================================================
+// Counter Offers
+// ============================================================
+
+model CounterOffer {
+  id        String   @id @default(cuid())
+  orderId   String
+  fromUserId String
+  toUserId  String
+  price     Decimal  @db.Decimal(40, 18)
+  quantity  Decimal  @db.Decimal(40, 18)
+  status    String   @default("PENDING") // PENDING | ACCEPTED | REJECTED | COUNTERED | EXPIRED
+  message   String?
+  expiresAt DateTime
+  respondedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromUser User @relation("CounterOfferUser", fields: [fromUserId], references: [id])
+  toUser   User @relation("CounterOfferTarget", fields: [toUserId], references: [id])
+
+  @@index([orderId])
+  @@index([fromUserId])
+  @@index([toUserId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Trades
+// ============================================================
+
+model Trade {
+  id         String   @id @default(cuid())
+  orderId    String
+  sellerId   String
+  buyerId    String
+  chain      String
+  token      String
+  quantity   Decimal  @db.Decimal(40, 18)
+  price      Decimal  @db.Decimal(40, 18)
+  total      Decimal  @db.Decimal(40, 18)
+  sellerFee  Decimal  @default(0) @db.Decimal(40, 18)
+  buyerFee   Decimal  @default(0) @db.Decimal(40, 18)
+  status     String   @default("PENDING") // PENDING | EXECUTED | FAILED | CANCELLED
+  executedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  order  Order @relation(fields: [orderId], references: [id])
+  seller User  @relation("TradeSeller", fields: [sellerId], references: [id])
+  buyer  User  @relation("TradeBuyer", fields: [buyerId], references: [id])
+
+  @@index([orderId])
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([chain])
+  @@index([token])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// OTPs
+// ============================================================
+
+model Otp {
+  id         String    @id @default(cuid())
+  userId     String
+  purpose    String    // WITHDRAWAL | EMAIL_VERIFICATION | PASSWORD_RESET | LOGIN
+  codeHash   String
+  attempts   Int       @default(0)
+  maxAttempts Int      @default(5)
+  expiresAt  DateTime
+  status     String    @default("PENDING") // PENDING | VERIFIED | EXPIRED | USED | MAX_ATTEMPTS
+  verifiedAt DateTime?
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([purpose])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Sessions (Device Sessions)
+// ============================================================
+
+model Session {
+  id          String    @id @default(cuid())
+  userId      String
+  deviceName  String
+  deviceType  String?
+  ipAddress   String?
+  userAgent   String?
+  status      String    @default("ACTIVE") // ACTIVE | REVOKED | EXPIRED
+  lastActiveAt DateTime @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+// ============================================================
+// Refresh Tokens
+// ============================================================
+
+model RefreshToken {
+  id         String    @id @default(cuid())
+  userId     String
+  tokenHash  String    @unique
+  sessionId  String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+// ============================================================
+// Notifications
+// ============================================================
+
+model Notification {
+  id         String   @id @default(cuid())
+  userId     String
+  type       String   // DEPOSIT | WITHDRAWAL | TRADE | ORDER | SECURITY | SYSTEM | ADMIN
+  title      String
+  message    String
+  channel    String   @default("BOTH") // EMAIL | IN_APP | BOTH
+  read       Boolean  @default(false)
+  readAt     DateTime?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([read])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Fees
+// ============================================================
+
+model Fee {
+  id          String   @id @default(cuid())
+  type        String   // WITHDRAWAL | TRADING | DEPOSIT
+  chain       String
+  token       String
+  percentage  Decimal  @db.Decimal(10, 4)
+  fixedAmount Decimal? @db.Decimal(40, 18)
+  minAmount   Decimal? @db.Decimal(40, 18)
+  maxAmount   Decimal? @db.Decimal(40, 18)
+  status      String   @default("ACTIVE") // ACTIVE | INACTIVE
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([type, chain, token])
+  @@index([type])
+  @@index([chain, token])
+  @@index([status])
+}
+
+// ============================================================
+// Trading Pairs
+// ============================================================
+
+model TradingPair {
+  id              String   @id @default(cuid())
+  baseToken       String
+  quoteToken      String
+  chain           String
+  symbol          String   @unique // e.g. ETH/USDT
+  enabled         Boolean  @default(true)
+  minOrderSize    Decimal  @db.Decimal(40, 18)
+  maxOrderSize    Decimal  @db.Decimal(40, 18)
+  priceDecimals   Int      @default(6)
+  quantityDecimals Int     @default(6)
+  makerFee        Decimal  @default(0) @db.Decimal(10, 4)
+  takerFee        Decimal  @default(0) @db.Decimal(10, 4)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([chain])
+  @@index([baseToken, quoteToken])
+  @@index([enabled])
+}
+
+// ============================================================
+// Token Configurations
+// ============================================================
+
+model TokenConfig {
+  id               String   @id @default(cuid())
+  symbol           String   @unique
+  name             String
+  decimals         Int      @default(18)
+  chains           String[] // JSON array of chain types
+  contractAddress  String?  // Address on each chain (for non-native)
+  minDeposit       Decimal? @db.Decimal(40, 18)
+  minWithdrawal    Decimal? @db.Decimal(40, 18)
+  withdrawalFeePercentage Decimal @default(1) @db.Decimal(10, 4)
+  isNative         Boolean  @default(false)
+  enabled          Boolean  @default(true)
+  icon             String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([symbol])
+  @@index([enabled])
+}
+
+// ============================================================
+// Chain Configurations
+// ============================================================
+
+model ChainConfig {
+  id                 String   @id @default(cuid())
+  chain              String   @unique // ETHEREUM | BASE
+  name               String
+  rpcUrl             String
+  chainId            Int
+  blockConfirmations Int      @default(12)
+  pollingIntervalMs  Int      @default(30000)
+  explorerUrl        String
+  enabled            Boolean  @default(true)
+  lastPolledBlock    Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([chain])
+  @@index([enabled])
+}
+
+// ============================================================
+// Blockchain Transactions (Outgoing)
+// ============================================================
+
+model BlockchainTransaction {
+  id          String   @id @default(cuid())
+  withdrawalId String? @unique
+  chain       String
+  txHash      String?  @unique
+  fromAddress String
+  toAddress   String
+  amount      Decimal  @db.Decimal(40, 18)
+  token       String
+  nonce       Int?
+  gasPrice    String?
+  gasLimit    String?
+  status      String   @default("PENDING") // PENDING | CONFIRMED | FAILED | REPLACED
+  confirmations Int    @default(0)
+  errorMessage String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  withdrawal Withdrawal? @relation(fields: [withdrawalId], references: [id], onDelete: SetNull)
+
+  @@index([chain])
+  @@index([txHash])
+  @@index([status])
+}
+
+// ============================================================
+// Order History Log
+// ============================================================
+
+model OrderHistory {
+  id        String   @id @default(cuid())
+  orderId   String
+  action    String   // CREATE | COUNTER_OFFER | ACCEPT | REJECT | CANCEL | EXPIRE | EXECUTE
+  actorId   String
+  details   Json?
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Audit Logs
+// ============================================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Admin Logs
+// ============================================================
+
+model AdminLog {
+  id          String   @id @default(cuid())
+  adminId     String
+  action      String
+  targetUserId String?
+  details     Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([targetUserId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Security Logs
+// ============================================================
+
+model SecurityLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  eventType  String   // LOGIN_FAILED | LOGIN_SUCCESS | PASSWORD_CHANGE | EMAIL_CHANGE | OTP_ATTEMPT | SUSPICIOUS_ACTIVITY
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// ============================================================
+// System Settings
+// ============================================================
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  category  String
+  isPublic  Boolean  @default(false)
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([isPublic])
+}
+
+// ============================================================
+// Email Verification Tokens
+// ============================================================
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}
+
+// ============================================================
+// Password Reset Tokens
+// ============================================================
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+}

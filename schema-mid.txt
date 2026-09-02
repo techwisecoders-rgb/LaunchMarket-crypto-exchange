@@ -1,0 +1,130 @@
+﻿model Balance {
+  id         String   @id @default(cuid())
+  walletId   String
+  userId     String
+  chain      String
+  token      String   // ETH | USDT | USDC | SIDRA
+  available  Decimal  @db.Decimal(40, 18)
+  locked     Decimal  @default(0) @db.Decimal(40, 18)
+  total      Decimal  @db.Decimal(40, 18)
+  updatedAt  DateTime @updatedAt
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, token])
+  @@unique([userId, chain, token])
+  @@index([userId])
+  @@index([chain, token])
+}
+
+// ============================================================
+// Wallet Transactions (Internal Ledger)
+// ============================================================
+
+model WalletTransaction {
+  id          String   @id @default(cuid())
+  userId      String
+  walletId    String
+  chain       String
+  token       String
+  type        String   // DEPOSIT | WITHDRAWAL | TRADE | FEE | MANUAL_CREDIT | MANUAL_DEBIT | INTERNAL_TRANSFER
+  status      String   @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | CANCELLED | CONFIRMED
+  amount      Decimal  @db.Decimal(40, 18)
+  fee         Decimal  @default(0) @db.Decimal(40, 18)
+  netAmount   Decimal  @db.Decimal(40, 18)
+  balanceAfter Decimal @db.Decimal(40, 18)
+  referenceId String?  // depositId, withdrawalId, tradeId, etc.
+  description String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([type])
+  @@index([status])
+  @@index([referenceId])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Deposit Addresses
+// ============================================================
+
+model DepositAddress {
+  id        String   @id @default(cuid())
+  userId    String
+  chain     String
+  token     String
+  address   String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, chain, token])
+  @@index([userId])
+  @@index([chain])
+  @@index([address])
+}
+
+// ============================================================
+// Deposits
+// ============================================================
+
+model Deposit {
+  id            String   @id @default(cuid())
+  userId        String
+  chain         String
+  token         String
+  amount        Decimal  @db.Decimal(40, 18)
+  txHash        String   @unique
+  fromAddress   String
+  toAddress     String
+  blockNumber   Int?
+  confirmations Int      @default(0)
+  status        String   @default("PENDING") // PENDING | CONFIRMED | COMPLETED | FAILED | IGNORED_BELOW_MIN
+  processedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([chain])
+  @@index([token])
+  @@index([status])
+  @@index([txHash])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Withdrawal Requests (pre-submission, prevents duplicates)
+// ============================================================
+
+model WithdrawalRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  chain       String
+  token       String
+  amount      Decimal  @db.Decimal(40, 18)
+  address     String
+  otpHash     String
+  otpExpiresAt DateTime
+  otpAttempts Int      @default(0)
+  maxAttempts Int      @default(5)
+  status      String   @default("PENDING") // PENDING | OTP_VERIFIED | COMPLETED | EXPIRED | FAILED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+

@@ -1,0 +1,50 @@
+# SIDRA EXCHANGE - Frontend Dockerfile
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json* ./
+COPY frontend/package.json frontend/package.json
+COPY shared/package.json shared/package.json
+COPY shared/tsconfig.json shared/tsconfig.json
+COPY shared/src shared/src
+COPY frontend/tsconfig.json frontend/tsconfig.json
+COPY frontend/next.config.mjs frontend/next.config.mjs
+COPY frontend/tailwind.config.ts frontend/tailwind.config.ts
+COPY frontend/postcss.config.mjs frontend/postcss.config.mjs
+
+RUN npm install
+
+# Copy source
+COPY frontend/next-env.d.ts frontend/next-env.d.ts
+COPY frontend/src frontend/src
+COPY frontend/public frontend/public
+
+ARG NEXT_PUBLIC_API_URL=http://localhost:3001
+ARG NEXT_PUBLIC_WS_URL=http://localhost:3001
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+
+WORKDIR /app/frontend
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=builder /app/node_modules node_modules
+COPY --from=builder /app/shared shared
+COPY --from=builder /app/frontend/.next frontend/.next
+COPY --from=builder /app/frontend/package.json frontend/package.json
+COPY --from=builder /app/frontend/public frontend/public
+COPY --from=builder /app/frontend/next.config.mjs frontend/next.config.mjs
+COPY --from=builder /app/frontend/next-env.d.ts frontend/next-env.d.ts
+
+WORKDIR /app/frontend
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start"]
