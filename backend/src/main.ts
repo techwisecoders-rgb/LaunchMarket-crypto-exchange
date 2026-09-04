@@ -18,7 +18,7 @@ async function bootstrap() {
   const apiVersion = configService.get<string>('API_VERSION', 'v1');
   const port = configService.get<number>('PORT', 3001);
   const corsOrigins = configService
-    .get<string>('CORS_ORIGINS', 'http://localhost:3000')
+    .get<string>('CORS_ORIGINS', 'https://launchmarket-crypto-exchange-1.onrender.com')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
