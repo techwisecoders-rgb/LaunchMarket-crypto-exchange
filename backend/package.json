@@ -2,7 +2,7 @@
   "name": "@sidra/backend",
   "version": "1.0.0",
   "private": true,
-  "description": "SIDRA EXCHANGE Backend - NestJS API",
+  "description": "LAUNCHMARKET CRYPTO EXCHANGE Backend - NestJS API",
   "scripts": {
     "build": "nest build",
     "start": "nest start",

@@ -434,6 +434,52 @@ export const withdrawalsApi = {
 };
 
 // ============================================================
+// Internal Transfer API
+// ============================================================
+
+export interface Transfer {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  chain: string;
+  token: string;
+  amount: string;
+  note?: string | null;
+  status: string;
+  senderBalanceAfter: string;
+  recipientBalanceAfter: string;
+  direction: 'IN' | 'OUT';
+  counterparty: string;
+  createdAt: string;
+  sender?: { id: string; email: string };
+  recipient?: { id: string; email: string };
+}
+
+export interface TransferResult {
+  transferId: string;
+  sender: { userId: string; email: string };
+  recipient: { userId: string; email: string };
+  chain: string;
+  token: string;
+  amount: string;
+  senderBalanceAfter: string;
+  recipientBalanceAfter: string;
+}
+
+export const transfersApi = {
+  create: (data: {
+    recipientEmail?: string;
+    recipientUserId?: string;
+    chain: string;
+    token: string;
+    amount: string;
+    note?: string;
+  }) => api.post<TransferResult>('/transfers', data),
+  history: (page = 1, limit = 20) =>
+    api.get<PaginatedResponse<Transfer>>('/transfers/history', { page, limit }),
+};
+
+// ============================================================
 // Order API endpoints
 // ============================================================
 
@@ -446,7 +492,23 @@ export const ordersApi = {
     api.get<PaginatedResponse<Order>>('/orders/my', { status, page, limit }),
   getOpenOrders: (symbol?: string) =>
     api.get<Order[]>('/orders/marketplace', { symbol }),
-  getMyOpenOrders: () => api.get<Order[]>('/orders/my', { status: 'OPEN' }),
+  /**
+   * Returns the user's open orders as a flat array. The backend's
+   * `/orders/my` endpoint returns a PaginatedResponse, so we extract `.data`.
+   * Defensive: handles both array and object shapes (for older backends or
+   * future endpoint refactors).
+   */
+  getMyOpenOrders: async (): Promise<Order[]> => {
+    const res = await api.get<PaginatedResponse<Order> | Order[]>(
+      '/orders/my',
+      { status: 'OPEN', limit: 100 },
+    );
+    if (Array.isArray(res)) return res;
+    if (res && typeof res === 'object' && 'data' in res && Array.isArray((res as any).data)) {
+      return (res as any).data;
+    }
+    return [];
+  },
   acceptOrder: (orderId: string) => api.post(`/orders/${orderId}/accept`),
   counterOffer: (orderId: string, price: string) =>
     api.post(`/orders/${orderId}/counter`, { price }),
@@ -523,6 +585,13 @@ export const adminApi = {
   listTrades: (page = 1, limit = 20) => api.get('/admin/trades', { page, limit }),
   listDeposits: (page = 1, limit = 20) => api.get('/admin/deposits', { page, limit }),
   listWithdrawals: (page = 1, limit = 20) => api.get('/admin/withdrawals', { page, limit }),
+  // Manual-withdrawal admin flow
+  listPendingWithdrawals: (page = 1, limit = 50) =>
+    api.get<PaginatedResponse<any>>('/withdrawals/admin/pending', { page, limit }),
+  completeWithdrawal: (requestId: string, txHash: string, note?: string) =>
+    api.post(`/withdrawals/admin/${requestId}/complete`, { txHash, note }),
+  rejectWithdrawal: (requestId: string, reason: string) =>
+    api.post(`/withdrawals/admin/${requestId}/reject`, { reason }),
   systemLogs: (page = 1, limit = 20) => api.get('/admin/audit', { page, limit }),
   walletMonitoring: () => api.get('/admin/wallets'),
   blockchainStatus: () => api.get('/admin/blockchain/status'),

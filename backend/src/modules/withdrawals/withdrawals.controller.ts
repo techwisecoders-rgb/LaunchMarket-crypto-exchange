@@ -33,6 +33,15 @@ class VerifyWithdrawalDto {
   code: string;
 }
 
+class AdminCompleteWithdrawalDto {
+  txHash: string;
+  note?: string;
+}
+
+class AdminRejectWithdrawalDto {
+  reason: string;
+}
+
 @ApiTags('withdrawals')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -90,6 +99,59 @@ export class WithdrawalsController {
     @Param('requestId') requestId: string,
   ) {
     return this.withdrawalsService.cancelWithdrawalRequest(userId, requestId);
+  }
+
+  // ============================================================
+  // Admin manual-withdrawal flow
+  // ============================================================
+
+  @Get('admin/pending')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @ApiOperation({ summary: 'List withdrawal requests awaiting admin review' })
+  async adminPending(
+    @Query('page') page = '1',
+    @Query('limit') limit = '50',
+    @Query('status') status?: string,
+  ) {
+    return this.withdrawalsService.adminListPendingWithdrawals({
+      page: parseInt(page, 10),
+      limit: Math.min(parseInt(limit, 10), 200),
+      status,
+    });
+  }
+
+  @Post('admin/:requestId/complete')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @ApiOperation({ summary: 'Admin: complete withdrawal by submitting the on-chain tx hash' })
+  async adminComplete(
+    @CurrentUser('sub') adminId: string,
+    @Param('requestId') requestId: string,
+    @Body() dto: AdminCompleteWithdrawalDto,
+  ) {
+    return this.withdrawalsService.adminCompleteWithdrawal({
+      adminId,
+      requestId,
+      txHash: dto.txHash,
+      note: dto.note,
+    });
+  }
+
+  @Post('admin/:requestId/reject')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPER_ADMIN')
+  @ApiOperation({ summary: 'Admin: reject withdrawal and refund locked balance' })
+  async adminReject(
+    @CurrentUser('sub') adminId: string,
+    @Param('requestId') requestId: string,
+    @Body() dto: AdminRejectWithdrawalDto,
+  ) {
+    return this.withdrawalsService.adminRejectWithdrawal({
+      adminId,
+      requestId,
+      reason: dto.reason,
+    });
   }
 
   @Get('history')

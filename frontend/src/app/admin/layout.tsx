@@ -28,7 +28,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="font-mono text-xs uppercase tracking-widest text-sidra-gold">Admin Console</h1>
-          <p className="text-sm text-muted-foreground">SIDRA EXCHANGE · {user.role.replace('_', ' ')}</p>
+          <p className="text-sm text-muted-foreground">LAUNCHMARKET CRYPTO EXCHANGE · {user.role.replace('_', ' ')}</p>
         </div>
       </div>
       {children}

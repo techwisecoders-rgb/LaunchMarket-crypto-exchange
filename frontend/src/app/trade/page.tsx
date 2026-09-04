@@ -128,7 +128,7 @@ function TradeContent() {
         <div className="exchange-container flex h-14 items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-sidra-blue to-sidra-gold text-xs font-bold text-white">S</div>
-            <span className="font-bold">SIDRA<span className="text-sidra-gold"> EXCHANGE</span></span>
+            <span className="font-bold">LAUNCHMARKET<span className="text-sidra-gold"> CRYPTO EXCHANGE</span></span>
           </Link>
           <nav className="flex items-center gap-4 text-sm">
             <Link href="/markets" className="text-muted-foreground hover:text-foreground">Markets</Link>

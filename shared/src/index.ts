@@ -1,5 +1,5 @@
 // ============================================================
-// SIDRA EXCHANGE - Shared Types
+// LAUNCHMARKET CRYPTO EXCHANGE - Shared Types
 // Single source of truth for enums, interfaces, and DTOs
 // used across backend and frontend
 // ============================================================

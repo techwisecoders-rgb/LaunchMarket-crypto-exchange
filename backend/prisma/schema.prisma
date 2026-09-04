@@ -8,8 +8,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // ============================================================
@@ -62,6 +63,8 @@ model User {
   @@index([email])
   @@index([status])
   @@index([role])
+  sentTransfers     Transfer[] @relation("TransferSender")
+  receivedTransfers Transfer[] @relation("TransferRecipient")
 }
 
 // ============================================================
@@ -130,6 +133,7 @@ model WalletTransaction {
   netAmount   Decimal  @db.Decimal(40, 18)
   balanceAfter Decimal @db.Decimal(40, 18)
   referenceId String?  // depositId, withdrawalId, tradeId, etc.
+  counterpartyUserId String?  // other party for INTERNAL_TRANSFER (sender/recipient id)
   description String?
   metadata    Json?
   createdAt   DateTime @default(now())
@@ -143,6 +147,7 @@ model WalletTransaction {
   @@index([type])
   @@index([status])
   @@index([referenceId])
+  @@index([counterpartyUserId])
   @@index([createdAt])
 }
 
@@ -713,4 +718,32 @@ model PasswordResetToken {
   @@index([userId])
   @@index([tokenHash])
   @@index([expiresAt])
+}
+
+// ============================================================
+// Internal Transfers (user -> user on same chain/token)
+// ============================================================
+
+model Transfer {
+  id                    String   @id @default(cuid())
+  senderId              String
+  recipientId           String
+  chain                 String   // ETHEREUM | BASE
+  token                 String   // ETH | USDT | USDC
+  amount                Decimal  @db.Decimal(40, 18)
+  note                  String?
+  status                String   @default("COMPLETED") // COMPLETED | FAILED
+  senderBalanceAfter    Decimal  @db.Decimal(40, 18)
+  recipientBalanceAfter Decimal  @db.Decimal(40, 18)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  sender    User @relation("TransferSender",    fields: [senderId],    references: [id], onDelete: Cascade)
+  recipient User @relation("TransferRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([chain, token])
 }

@@ -23,6 +23,7 @@ import { OtpModule } from './modules/otp/otp.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { HealthModule } from './modules/health/health.module';
+import { TransfersModule } from './modules/transfers/transfers.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { HealthModule } from './modules/health/health.module';
     AuditModule,
     RealtimeModule,
     HealthModule,
+    TransfersModule,
   ],
   providers: [
     {

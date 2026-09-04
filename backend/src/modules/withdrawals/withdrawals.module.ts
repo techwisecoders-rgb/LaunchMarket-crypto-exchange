@@ -8,6 +8,7 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
 import { FeesModule } from '../fees/fees.module';
 import { OtpModule } from '../otp/otp.module';
 import { MailerModule } from '../mailer/mailer.module';
+import { RealtimeModule } from '../realtime/realtime.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { MailerModule } from '../mailer/mailer.module';
     FeesModule,
     OtpModule,
     MailerModule,
+    RealtimeModule,
     ConfigModule,
   ],
   controllers: [WithdrawalsController],

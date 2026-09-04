@@ -29,22 +29,14 @@ export class WalletsController {
     }));
   }
 
-  @Get('me/:chain')
-  @ApiOperation({ summary: 'Get current user wallet for a chain' })
-  async getMyWallet(@CurrentUser('sub') userId: string, @Query('chain') chain: string) {
-    const wallet = await this.walletService.getUserWallet(userId, chain as 'ETHEREUM' | 'BASE');
-    return {
-      id: wallet.id,
-      chain: wallet.chain,
-      address: wallet.address,
-      walletType: wallet.walletType,
-      status: wallet.status,
-      createdAt: wallet.createdAt,
-    };
-  }
-
   /**
    * Aggregated balances for the current user, grouped by token symbol.
+   *
+   * IMPORTANT: This route MUST be declared BEFORE `me/:chain`, otherwise
+   * NestJS / Express matches `me/balances` against the parameterized route
+   * first and treats "balances" as the chain name. That triggers a Prisma
+   * query with `chain: 'BALANCES'` which fails with PRISMA_VALIDATION_ERROR
+   * ("Invalid data provided"), surfacing as a 400 to the frontend.
    *
    * Shape (matches the frontend's `walletsApi.getBalances()`):
    *   {
@@ -101,6 +93,20 @@ export class WalletsController {
     }
 
     return grouped;
+  }
+
+  @Get('me/:chain')
+  @ApiOperation({ summary: 'Get current user wallet for a chain' })
+  async getMyWallet(@CurrentUser('sub') userId: string, @Query('chain') chain: string) {
+    const wallet = await this.walletService.getUserWallet(userId, chain as 'ETHEREUM' | 'BASE');
+    return {
+      id: wallet.id,
+      chain: wallet.chain,
+      address: wallet.address,
+      walletType: wallet.walletType,
+      status: wallet.status,
+      createdAt: wallet.createdAt,
+    };
   }
 
   @Get('admin')

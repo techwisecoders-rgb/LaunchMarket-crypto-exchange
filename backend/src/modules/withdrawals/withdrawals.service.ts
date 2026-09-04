@@ -3,6 +3,7 @@ import {
   BadRequestException,
   Logger,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -13,6 +14,7 @@ import { BlockchainService } from '../blockchain/blockchain.service';
 import { FeesService } from '../fees/fees.service';
 import { OtpService } from '../otp/otp.service';
 import { MailerService } from '../mailer/mailer.service';
+import { RealtimeGateway } from '../realtime/realtime.gateway';
 
 interface TokenContractConfig {
   symbol: string;
@@ -32,6 +34,7 @@ export class WithdrawalsService {
     private readonly feesService: FeesService,
     private readonly otpService: OtpService,
     private readonly mailerService: MailerService,
+    private readonly realtimeGateway: RealtimeGateway,
     private readonly configService: ConfigService,
   ) {}
 
@@ -323,14 +326,42 @@ export class WithdrawalsService {
       throw new BadRequestException('Invalid OTP code');
     }
 
-    // Mark request as OTP verified
-    await this.prisma.withdrawalRequest.update({
+    // Mark request as OTP verified, then immediately as PROCESSING.
+    // The actual on-chain transfer is performed MANUALLY by an admin who
+    // reviews the request in the admin panel and submits the resulting
+    // tx hash via adminCompleteWithdrawal(). This is by design for
+    // testnet compliance + auditability (the admin becomes the human
+    // safeguard against auto-send bugs).
+    const updated = await this.prisma.withdrawalRequest.update({
       where: { id: request.id },
-      data: { status: 'OTP_VERIFIED' },
+      data: { status: 'PROCESSING' },
     });
 
-    // Execute the withdrawal in an atomic transaction
-    return this.executeWithdrawal(userId, request.id, ip, userAgent);
+    // Notify the user that their request is now waiting for admin review.
+    await this.prisma.notification.create({
+      data: {
+        userId,
+        type: 'WITHDRAWAL',
+        title: 'Withdrawal in review',
+        message: `Your withdrawal of ${updated.amount.toString()} ${updated.token} to ${updated.address} is in review and will be processed by an admin shortly.`,
+        channel: 'BOTH',
+      },
+    });
+
+    this.logger.log(
+      `Withdrawal ${requestId} OTP-verified and now in PROCESSING (awaiting admin): ${updated.amount.toString()} ${updated.token} on ${updated.chain}`,
+    );
+
+    return {
+      requestId: updated.id,
+      status: updated.status,
+      amount: updated.amount.toString(),
+      chain: updated.chain,
+      token: updated.token,
+      address: updated.address,
+      message:
+        'Withdrawal submitted. An admin will review and broadcast the on-chain transaction. You will be notified when complete.',
+    };
   }
 
   /**
@@ -828,5 +859,354 @@ export class WithdrawalsService {
 
   private hashOtp(code: string): string {
     return crypto.createHash('sha256').update(code).digest('hex');
+  }
+
+  // ============================================================
+  // Admin manual-withdrawal flow
+  // ============================================================
+
+  /**
+   * List all withdrawal requests waiting for admin review.
+   */
+  async adminListPendingWithdrawals(params: { page: number; limit: number; status?: string }) {
+    const { page, limit, status } = params;
+    const skip = (page - 1) * limit;
+    const where: Prisma.WithdrawalRequestWhereInput = status
+      ? { status }
+      : { status: { in: ['PROCESSING', 'OTP_VERIFIED'] } };
+
+    const [data, total] = await Promise.all([
+      this.prisma.withdrawalRequest.findMany({
+        where,
+        include: { user: { select: { id: true, email: true } } },
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.withdrawalRequest.count({ where }),
+    ]);
+
+    return {
+      data: data.map((r) => ({
+        id: r.id,
+        userId: r.userId,
+        userEmail: r.user.email,
+        chain: r.chain,
+        token: r.token,
+        amount: r.amount.toString(),
+        address: r.address,
+        status: r.status,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      })),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+  /**
+   * Admin completes a withdrawal request by submitting the on-chain
+   * tx hash they (or a hot wallet) just broadcast.
+   *
+   * Steps:
+   *   - Validate txHash format
+   *   - Lock request + balance rows
+   *   - Create the Withdrawal row (status COMPLETED, processedBy = adminId)
+   *   - Debit the user's `locked` bucket and `total` (the locked funds
+   *     are released; `total` decreases by the gross amount since this is
+   *     a real outflow)
+   *   - Mark the WithdrawalRequest COMPLETED
+   *   - Mark the pending WalletTransaction COMPLETED
+   *   - Fire realtime `balance:update` + `withdrawal:completed`
+   *   - Write audit + security logs
+   */
+  async adminCompleteWithdrawal(params: {
+    adminId: string;
+    requestId: string;
+    txHash: string;
+    note?: string;
+  }) {
+    const { adminId, requestId, txHash, note } = params;
+    if (!/^0x([A-Fa-f0-9]{64})$/.test(txHash)) {
+      throw new BadRequestException('txHash must be a 0x-prefixed 66-char Ethereum transaction hash.');
+    }
+
+    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin || !['ADMIN', 'SUPER_ADMIN'].includes(admin.role)) {
+      throw new ForbiddenException('Only ADMIN / SUPER_ADMIN can complete withdrawals.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM "WithdrawalRequest" WHERE id = ${requestId} FOR UPDATE
+      `;
+      const request = await tx.withdrawalRequest.findUnique({ where: { id: requestId } });
+      if (!request) throw new NotFoundException('Withdrawal request not found.');
+      if (!['PROCESSING', 'OTP_VERIFIED'].includes(request.status)) {
+        throw new BadRequestException(
+          `Withdrawal is in status "${request.status}" and cannot be completed.`,
+        );
+      }
+      const wallet = await tx.wallet.findFirst({
+        where: { userId: request.userId, chain: request.chain, walletType: 'SPOT' },
+      });
+      if (!wallet) throw new NotFoundException('Wallet not found.');
+      const feeInfo = await this.feesService.getFee({
+        type: 'WITHDRAWAL',
+        chain: request.chain as ChainType,
+        token: request.token,
+      });
+      const feeAmount = this.feesService.calculateWithdrawalFee(
+        request.amount.toString(),
+        feeInfo.percentage,
+      );
+      const netAmount = new Prisma.Decimal(request.amount).sub(feeAmount);
+
+  const withdrawal = await tx.withdrawal.create({
+        data: {
+          userId: request.userId,
+          chain: request.chain,
+          token: request.token,
+          amount: request.amount,
+          fee: feeAmount,
+          netAmount,
+          address: request.address,
+          txHash,
+          status: 'COMPLETED',
+          processedBy: adminId,
+          adminNote: note ?? null,
+          processedAt: new Date(),
+        },
+      });
+
+      const balance = await tx.balance.findUnique({
+        where: { walletId_token: { walletId: wallet.id, token: request.token } },
+      });
+      if (!balance) throw new NotFoundException('Balance row not found.');
+      let newLocked = new Prisma.Decimal(balance.locked).sub(request.amount);
+      if (newLocked.lt(0)) newLocked = new Prisma.Decimal(0);
+      const newTotal = new Prisma.Decimal(balance.total).sub(request.amount);
+      await tx.balance.update({
+        where: { id: balance.id },
+        data: { locked: newLocked, total: newTotal },
+      });
+
+      const pendingTx = await tx.walletTransaction.findFirst({
+        where: { userId: request.userId, referenceId: requestId, type: 'WITHDRAWAL' },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (pendingTx) {
+        await tx.walletTransaction.update({
+          where: { id: pendingTx.id },
+          data: {
+            status: 'COMPLETED',
+            fee: feeAmount,
+            netAmount,
+            balanceAfter: balance.available,
+          },
+        });
+      }
+
+      await tx.withdrawalRequest.update({
+        where: { id: requestId },
+        data: { status: 'COMPLETED' },
+      });
+
+      await tx.notification.create({
+        data: {
+          userId: request.userId,
+          type: 'WITHDRAWAL',
+          title: 'Withdrawal completed',
+          message: `Your withdrawal of ${request.amount.toString()} ${request.token} to ${request.address} is complete. Tx: ${txHash.slice(0, 10)}...`,
+          channel: 'BOTH',
+        },
+      });
+
+      await tx.adminLog.create({
+        data: {
+          adminId,
+          action: 'WITHDRAWAL_COMPLETED',
+          targetUserId: request.userId,
+          details: {
+            requestId,
+            withdrawalId: withdrawal.id,
+            chain: request.chain,
+            token: request.token,
+            amount: request.amount.toString(),
+            fee: feeAmount.toString(),
+            netAmount: netAmount.toString(),
+            address: request.address,
+            txHash,
+            note: note ?? null,
+          },
+        },
+      });
+      await tx.securityLog.create({
+        data: {
+          userId: request.userId,
+          eventType: 'WITHDRAWAL_COMPLETED',
+          details: { requestId, txHash, processedBy: adminId },
+        },
+      });
+
+      this.logger.log(
+        `[ADMIN] ${admin.email} completed withdrawal ${requestId} tx=${txHash}`,
+      );
+
+      this.realtimeGateway.emitToUser(request.userId, 'balance:update', {
+        userId: request.userId,
+        chain: request.chain,
+        token: request.token,
+        amount: request.amount.toString(),
+        direction: 'out',
+        withdrawalId: withdrawal.id,
+        txHash,
+        at: new Date().toISOString(),
+      });
+      this.realtimeGateway.emitToUser(request.userId, 'withdrawal:completed', {
+        requestId,
+        withdrawalId: withdrawal.id,
+        txHash,
+      });
+      this.realtimeGateway.emitToUser(request.userId, 'notification:new', {
+        type: 'WITHDRAWAL',
+        title: 'Withdrawal completed',
+        message: `Your withdrawal of ${request.amount.toString()} ${request.token} has been broadcast.`,
+        at: new Date().toISOString(),
+      });
+
+      return {
+        withdrawalId: withdrawal.id,
+        requestId,
+        status: 'COMPLETED',
+        txHash,
+        amount: request.amount.toString(),
+        fee: feeAmount.toString(),
+        netAmount: netAmount.toString(),
+        processedBy: adminId,
+      };
+    });
+  }
+
+  /**
+   * Admin rejects a withdrawal request. Refunds the locked balance
+   * back to the user's `available` bucket, marks the request FAILED,
+   * and writes a notification + audit trail.
+   */
+  async adminRejectWithdrawal(params: {
+    adminId: string;
+    requestId: string;
+    reason: string;
+  }) {
+    const { adminId, requestId, reason } = params;
+    if (!reason || reason.trim().length < 3) {
+      throw new BadRequestException('A rejection reason of at least 3 characters is required.');
+    }
+    const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
+    if (!admin || !['ADMIN', 'SUPER_ADMIN'].includes(admin.role)) {
+      throw new ForbiddenException('Only ADMIN / SUPER_ADMIN can reject withdrawals.');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM "WithdrawalRequest" WHERE id = ${requestId} FOR UPDATE
+      `;
+      const request = await tx.withdrawalRequest.findUnique({ where: { id: requestId } });
+      if (!request) throw new NotFoundException('Withdrawal request not found.');
+      if (request.status === 'COMPLETED') {
+        throw new BadRequestException('Cannot reject a completed withdrawal.');
+      }
+      if (['FAILED', 'CANCELLED', 'EXPIRED'].includes(request.status)) {
+        throw new BadRequestException(`Withdrawal is already ${request.status.toLowerCase()}.`);
+      }
+      const wallet = await tx.wallet.findFirst({
+        where: { userId: request.userId, chain: request.chain, walletType: 'SPOT' },
+      });
+      if (!wallet) throw new NotFoundException('Wallet not found.');
+
+      // Refund locked -> available
+      const balance = await tx.balance.findUnique({
+        where: { walletId_token: { walletId: wallet.id, token: request.token } },
+      });
+      if (balance) {
+        const newAvailable = new Prisma.Decimal(balance.available).add(request.amount);
+        let newLocked = new Prisma.Decimal(balance.locked).sub(request.amount);
+        if (newLocked.lt(0)) newLocked = new Prisma.Decimal(0);
+        await tx.balance.update({
+          where: { id: balance.id },
+          data: { available: newAvailable, locked: newLocked },
+        });
+      }
+
+      await tx.withdrawalRequest.update({
+        where: { id: requestId },
+        data: { status: 'FAILED' },
+      });
+
+      const pendingTx = await tx.walletTransaction.findFirst({
+        where: { userId: request.userId, referenceId: requestId, type: 'WITHDRAWAL' },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (pendingTx) {
+        await tx.walletTransaction.update({
+          where: { id: pendingTx.id },
+          data: {
+            status: 'FAILED',
+            description: `${pendingTx.description ?? 'Withdrawal'} (rejected: ${reason})`,
+          },
+        });
+      }
+
+      await tx.notification.create({
+        data: {
+          userId: request.userId,
+          type: 'WITHDRAWAL',
+          title: 'Withdrawal rejected',
+          message: `Your withdrawal of ${request.amount.toString()} ${request.token} was rejected. Reason: ${reason}. The amount has been refunded to your available balance.`,
+          channel: 'BOTH',
+        },
+      });
+      await tx.adminLog.create({
+        data: {
+          adminId,
+          action: 'WITHDRAWAL_REJECTED',
+          targetUserId: request.userId,
+          details: {
+            requestId,
+            chain: request.chain,
+            token: request.token,
+            amount: request.amount.toString(),
+            address: request.address,
+            reason,
+          },
+        },
+      });
+
+      this.logger.log(
+        `[ADMIN] ${admin.email} rejected withdrawal ${requestId}: ${reason}`,
+      );
+
+      this.realtimeGateway.emitToUser(request.userId, 'balance:update', {
+        userId: request.userId,
+        chain: request.chain,
+        token: request.token,
+        amount: request.amount.toString(),
+        direction: 'refund',
+        at: new Date().toISOString(),
+      });
+      this.realtimeGateway.emitToUser(request.userId, 'withdrawal:rejected', {
+        requestId,
+        reason,
+      });
+
+      return {
+        requestId,
+        status: 'FAILED',
+        refundedAmount: request.amount.toString(),
+        reason,
+        rejectedBy: adminId,
+      };
+    });
   }
 }

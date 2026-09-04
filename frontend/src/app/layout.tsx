@@ -7,8 +7,8 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 
 export const metadata: Metadata = {
   title: {
-    default: 'SIDRA EXCHANGE - Hybrid P2P Cryptocurrency Exchange',
-    template: '%s | SIDRA EXCHANGE',
+    default: 'LAUNCHMARKET CRYPTO EXCHANGE - Hybrid P2P Cryptocurrency Exchange',
+    template: '%s | LAUNCHMARKET CRYPTO EXCHANGE',
   },
   description:
     'Trade ETH, USDT and USDC on Ethereum and Base. A hybrid P2P marketplace cryptocurrency exchange.',

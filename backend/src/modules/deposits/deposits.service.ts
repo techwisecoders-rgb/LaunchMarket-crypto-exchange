@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -583,61 +583,156 @@ export class DepositsService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Manually create a deposit (admin, also used by tests).
+   *
+   * Accepts either `userId` (UUID) or `email` to identify the target user.
+   * If `toAddress` is omitted, it is auto-fetched from the user's SPOT wallet
+   * on the requested chain (so the admin only needs `email` + `chain` +
+   * `txHash` + `amount` + `fromAddress` to credit a missed deposit).
    */
   async manualDeposit(params: {
-    userId: string;
+    userId?: string;
+    email?: string;
     chain: ChainType;
     token: string;
     amount: string;
     txHash: string;
     fromAddress: string;
-    toAddress: string;
+    toAddress?: string;
     adminId: string;
+    note?: string;
   }) {
-    const { userId, chain, token, amount, txHash, fromAddress, toAddress, adminId } = params;
+    const { userId, email, chain, token, amount, txHash, fromAddress, toAddress, adminId, note } = params;
 
-    const existing = await this.prisma.deposit.findUnique({ where: { txHash } });
-    if (existing) {
-      throw new Error('Deposit with this txHash already exists');
+    // 1) Identify the target user
+    if (!userId && !email) {
+      throw new BadRequestException('Either `userId` (UUID) or `email` must be provided.');
     }
 
+    let resolvedUser: { id: string; email: string; status: string; role: string } | null = null;
+
+    if (userId) {
+      resolvedUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, email: true, status: true, role: true },
+      });
+      if (!resolvedUser) {
+        throw new NotFoundException(`No user found with id "${userId}".`);
+      }
+    } else if (email) {
+      const normalizedEmail = email.toLowerCase().trim();
+      resolvedUser = await this.prisma.user.findUnique({
+        where: { email: normalizedEmail },
+        select: { id: true, email: true, status: true, role: true },
+      });
+      if (!resolvedUser) {
+        throw new NotFoundException(`No user found with email "${normalizedEmail}".`);
+      }
+    }
+
+    const targetUserId = resolvedUser!.id;
+
+    // 2) Verify the acting admin
     const admin = await this.prisma.user.findUnique({ where: { id: adminId } });
     if (!admin || !['ADMIN', 'SUPER_ADMIN'].includes(admin.role)) {
-      throw new Error('Unauthorized: admin only');
+      throw new ForbiddenException('Only ADMIN / SUPER_ADMIN can credit deposits manually.');
     }
 
+    // 3) Deduplicate by txHash
+    const existing = await this.prisma.deposit.findUnique({ where: { txHash } });
+    if (existing) {
+      throw new ConflictException(
+        `Deposit with txHash "${txHash}" already exists (deposit id=${existing.id}, status=${existing.status}).`,
+      );
+    }
+
+    // 4) Find the user's wallet on this chain (SPOT only)
+    const wallet = await this.prisma.wallet.findFirst({
+      where: { userId: targetUserId, chain, walletType: 'SPOT' },
+    });
+    if (!wallet) {
+      throw new NotFoundException(
+        `No SPOT wallet found for user ${resolvedUser!.email} on chain ${chain}.`,
+      );
+    }
+
+    // 5) If `toAddress` was not provided, auto-fill from the wallet so the
+    //    caller doesn't have to look it up. (Common case: credit a deposit
+    //    that the poller missed — admin only knows the explorer URL.)
+    const finalToAddress = toAddress ?? wallet.address;
+    if (!finalToAddress) {
+      throw new BadRequestException(
+        'Could not determine a `toAddress`. Pass it explicitly or ensure the user has a wallet on this chain.',
+      );
+    }
+
+    // 6) Honour minDeposit for the configured token
+    const tokenConfig = await this.prisma.tokenConfig.findFirst({
+      where: { symbol: token, enabled: true },
+    });
+    if (tokenConfig?.minDeposit) {
+      const minDeposit = Number(tokenConfig.minDeposit);
+      const amountNum = Number(amount);
+      if (Number.isNaN(amountNum)) {
+        throw new BadRequestException(`amount "${amount}" is not a valid number.`);
+      }
+      if (amountNum < minDeposit) {
+        throw new BadRequestException(
+          `amount ${amount} is below the configured minDeposit of ${minDeposit} ${token}.`,
+        );
+      }
+    }
+
+    // 7) Create the deposit row (status COMPLETED — admin is asserting on-chain reality)
     const deposit = await this.prisma.deposit.create({
       data: {
-        userId,
+        userId: targetUserId,
         chain,
         token,
         amount: new Prisma.Decimal(amount),
         txHash,
         fromAddress,
-        toAddress,
+        toAddress: finalToAddress,
         status: 'COMPLETED',
         processedAt: new Date(),
         confirmations: 999,
       },
     });
 
-    // Find wallet
-    const wallet = await this.prisma.wallet.findFirst({
-      where: { userId, chain, walletType: 'SPOT' },
-    });
+    this.logger.log(
+      `[MANUAL] admin=${adminId} credited ${amount} ${token} on ${chain} to user ${resolvedUser!.email} (tx=${txHash})`,
+    );
 
-    await this.completeDeposit(deposit.id, userId, chain, token, amount, wallet?.id);
+    // 8) Credit the balance + emit real-time events (same path the poller uses)
+    await this.completeDeposit(deposit.id, targetUserId, chain, token, amount, wallet.id);
 
+    // 9) Audit log — note (free-form reason) goes in `details`
     await this.prisma.adminLog.create({
       data: {
         adminId,
         action: 'MANUAL_DEPOSIT_CREDITED',
-        targetUserId: userId,
-        details: { chain, token, amount, txHash },
+        targetUserId,
+        details: {
+          chain,
+          token,
+          amount,
+          txHash,
+          fromAddress,
+          toAddress: finalToAddress,
+          depositId: deposit.id,
+          note: note ?? null,
+        },
       },
     });
 
-    return deposit;
+    return {
+      ...deposit,
+      creditedTo: {
+        userId: targetUserId,
+        email: resolvedUser!.email,
+        walletId: wallet.id,
+        walletAddress: finalToAddress,
+      },
+    };
   }
 
   /**

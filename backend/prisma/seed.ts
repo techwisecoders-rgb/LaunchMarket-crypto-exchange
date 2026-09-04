@@ -4,7 +4,7 @@ import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Seeding SIDRA EXCHANGE database...');
+  console.log('🌱 Seeding LAUNCHMARKET CRYPTO EXCHANGE database...');
 
   // ============================================================
   // Admin user
@@ -327,7 +327,7 @@ async function main() {
   }
   console.log(`✅ System settings (${settings.length})`);
 
-  console.log('🎉 SIDRA EXCHANGE database seeded successfully!');
+  console.log('🎉 LAUNCHMARKET CRYPTO EXCHANGE database seeded successfully!');
 }
 
 main()

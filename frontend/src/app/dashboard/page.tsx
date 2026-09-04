@@ -43,17 +43,24 @@ export default function DashboardPage() {
     queryFn: publicApi.getMarkets,
   });
 
+  // Compute total balance: sum of USDT across BASE + ETHEREUM chains.
+  // The backend endpoint /wallets/me/balances already groups by token symbol
+  // and sums across chains, so the USDT entry's `internalBalance` (preferred)
+  // or `available` already represents BASE USDT + ETHEREUM USDT.
+  // IMPORTANT: do NOT use `parseFloat(...) || parseFloat(...)` — `0 || X`
+  // returns X because 0 is falsy, which would inflate the total when USDT is
+  // legitimately zero. Always coerce explicitly.
   const totalUsd = balances
-    ? Object.values(
-        balances as Record<string, { internalBalance?: string; available?: string; onchainBalance?: string }>,
-      ).reduce((sum, b) => {
-        const raw =
-          parseFloat(b?.internalBalance ?? '0') ||
-          parseFloat(b?.available ?? '0') ||
-          parseFloat(b?.onchainBalance ?? '0') ||
-          0;
-        return sum + (Number.isFinite(raw) ? raw : 0);
-      }, 0)
+    ? (() => {
+        const usdt = (balances as Record<
+          string,
+          { internalBalance?: string; available?: string; onchainBalance?: string }
+        >)['USDT'];
+        const raw = Number(
+          usdt?.internalBalance ?? usdt?.available ?? usdt?.onchainBalance ?? '0',
+        );
+        return Number.isFinite(raw) ? raw : 0;
+      })()
     : 0;
 
   return (
@@ -82,13 +89,13 @@ export default function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Balance</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">USDT Balance (Base + Ethereum)</CardTitle>
           </CardHeader>
           <CardContent>
             {balLoading ? (
               <Loader2 className="h-5 w-5 animate-spin text-primary" />
             ) : (
-              <div className="text-2xl font-bold">${totalUsd.toFixed(2)}</div>
+              <div className="text-2xl font-bold">{totalUsd.toFixed(2)} USDT</div>
             )}
           </CardContent>
         </Card>

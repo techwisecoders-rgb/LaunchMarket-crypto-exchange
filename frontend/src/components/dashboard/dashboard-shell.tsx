@@ -175,7 +175,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-sidra-blue to-sidra-gold text-xs font-bold text-white">
               S
             </div>
-            <span className="font-bold">SIDRA</span>
+            <span className="font-bold">LAUNCHMARKET</span>
           </Link>
           <span
             className="ml-1 inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"

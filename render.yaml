@@ -45,6 +45,6 @@ services:
       - key: NEXT_PUBLIC_WS_URL
         value: wss://sidra-backend.onrender.com
       - key: NEXT_PUBLIC_APP_NAME
-        value: SIDRA EXCHANGE
+        value: LAUNCHMARKET CRYPTO EXCHANGE
       - key: NEXT_PUBLIC_SUPPORT_EMAIL
-        value: support@sidra.exchange
+        value: support@launchmarket.exchange

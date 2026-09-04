@@ -82,7 +82,7 @@ async function bootstrap() {
 
   // Swagger documentation
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('SIDRA EXCHANGE API')
+    .setTitle('LAUNCHMARKET CRYPTO EXCHANGE API')
     .setDescription('Production-grade hybrid cryptocurrency exchange API')
     .setVersion('1.0.0')
     .addBearerAuth(
@@ -90,7 +90,7 @@ async function bootstrap() {
       'access-token',
     )
     .addCookieAuth('refresh_token', { type: 'http', scheme: 'bearer' })
-    .setContact('SIDRA Exchange', 'https://sidra.exchange', 'support@sidra.exchange')
+    .setContact('LaunchMarket Crypto Exchange', 'https://launchmarket.exchange', 'support@launchmarket.exchange')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
@@ -102,7 +102,7 @@ async function bootstrap() {
   app.enableShutdownHooks();
 
   await app.listen(port);
-  logger.log(`SIDRA EXCHANGE API running on http://localhost:${port}/${apiPrefix}/${apiVersion}`);
+  logger.log(`LAUNCHMARKET CRYPTO EXCHANGE API running on http://localhost:${port}/${apiPrefix}/${apiVersion}`);
   logger.log(`Swagger docs available at http://localhost:${port}/${apiPrefix}/docs`);
 }
 

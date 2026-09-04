@@ -68,7 +68,7 @@ export default function LandingPage() {
               S
             </div>
             <span className="text-xl font-bold tracking-tight">
-              SIDRA<span className="text-sidra-gold"> EXCHANGE</span>
+              LAUNCHMARKET<span className="text-sidra-gold"> CRYPTO EXCHANGE</span>
             </span>
           </Link>
           <nav className="hidden items-center gap-6 md:flex">
@@ -229,7 +229,7 @@ export default function LandingPage() {
       <footer className="border-t border-border/50 py-8">
         <div className="exchange-container flex flex-col items-center justify-between gap-4 text-sm text-muted-foreground md:flex-row">
           <div>
-            © {new Date().getFullYear()} SIDRA EXCHANGE. All rights reserved.
+            © {new Date().getFullYear()} LAUNCHMARKET CRYPTO EXCHANGE. All rights reserved.
           </div>
           <div className="flex items-center gap-6">
             <Link href="/markets" className="hover:text-foreground">Markets</Link>

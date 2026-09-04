@@ -35,8 +35,21 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
+  const [logoutBanner, setLogoutBanner] = useState<string | null>(null);
   const credentialsRef = useRef<LoginForm | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Show a one-shot banner if the user was logged out by the inactivity or
+  // absolute-expiry timer. The reason is stashed in sessionStorage by the
+  // AuthProvider just before redirecting.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const reason = window.sessionStorage.getItem('sidra_logout_reason');
+    if (reason) {
+      setLogoutBanner(reason);
+      window.sessionStorage.removeItem('sidra_logout_reason');
+    }
+  }, []);
 
   const {
     register,
@@ -101,7 +114,7 @@ export default function LoginPage() {
     try {
       const result = await loginWithOtp(credentialsRef.current, data.code);
       if (result.status === 'SUCCESS') {
-        toast.success('Welcome back to SIDRA EXCHANGE');
+        toast.success('Welcome back to LAUNCHMARKET CRYPTO EXCHANGE');
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Invalid or expired code';
@@ -139,6 +152,11 @@ export default function LoginPage() {
         title="Verify It's You"
         subtitle="Enter the 6-digit code we just emailed you"
       >
+        {logoutBanner && (
+          <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+            {logoutBanner}
+          </div>
+        )}
         <div className="mb-4 flex items-center justify-center text-primary">
           <MailCheck className="h-10 w-10" />
         </div>
@@ -193,7 +211,12 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthLayout title="Log In" subtitle="Access your SIDRA EXCHANGE account">
+    <AuthLayout title="Log In" subtitle="Access your LAUNCHMARKET CRYPTO EXCHANGE account">
+      {logoutBanner && (
+        <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+          {logoutBanner}
+        </div>
+      )}
       <form onSubmit={handleSubmit(onSubmitCredentials)} className="space-y-4">
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>

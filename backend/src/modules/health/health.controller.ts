@@ -25,7 +25,7 @@ export class HealthController {
 
     return {
       status: 'ok',
-      service: this.configService.get<string>('APP_NAME', 'SIDRA Exchange'),
+      service: this.configService.get<string>('APP_NAME', 'LaunchMarket Crypto Exchange'),
       version: '1.0.0',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),

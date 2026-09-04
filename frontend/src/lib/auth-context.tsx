@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
@@ -20,9 +21,6 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   /**
    * Two-step login flow with email OTP verification.
-   * Returns `{ status: 'OTP_REQUIRED' }` after a successful step 1 so the
-   * caller can switch to the OTP entry screen, or completes login when
-   * called with a 6-digit code.
    */
   loginWithOtp: (
     credentials: { email: string; password: string },
@@ -32,20 +30,43 @@ interface AuthContextType {
     | { status: 'SUCCESS' }
   >;
   register: (email: string, password: string) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (reason?: 'manual' | 'idle' | 'expired') => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+/**
+ * Idle session timeout: if no mouse / keyboard / touch / scroll activity
+ * for this many ms, force a logout. Default: 15 minutes.
+ */
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+
+/**
+ * Absolute session lifetime: regardless of activity, force logout after
+ * this many ms from the moment the user *successfully* authenticated.
+ * Default: 8 hours.
+ */
+const ABSOLUTE_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+
+const ACTIVITY_EVENTS: string[] = [
+  'mousedown',
+  'keydown',
+  'scroll',
+  'touchstart',
+  'click',
+  'visibilitychange',
+];
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const absoluteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLoggingOutRef = useRef(false);
 
-  // Live-update dashboard balances, deposit history, orders, etc. the
-  // moment the backend credits a new testnet deposit. Mounted here so
-  // every authenticated route is reactive without each page opting in.
+  // Live-update dashboard balances / deposits / orders via WebSocket.
   useRealtime(!!user);
 
   const refreshUser = useCallback(async () => {
@@ -59,6 +80,110 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const logout = useCallback(
+    async (reason: 'manual' | 'idle' | 'expired' = 'manual') => {
+      // Guard against double-logout (idle timer + manual click same tick).
+      if (isLoggingOutRef.current) return;
+      isLoggingOutRef.current = true;
+
+      try {
+        const refreshToken =
+          typeof window !== 'undefined'
+            ? window.localStorage.getItem('sidra_refresh_token')
+            : null;
+
+        if (refreshToken) {
+          // Best-effort server-side revocation. Fail silently on network errors.
+          await authApi.logout(refreshToken).catch(() => undefined);
+        }
+      } catch {
+        // ignore
+      } finally {
+        socketManager.disconnect();
+        api.setTokens(null);
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.removeItem('sidra_refresh_token');
+        }
+
+        if (idleTimerRef.current) {
+          clearTimeout(idleTimerRef.current);
+          idleTimerRef.current = null;
+        }
+        if (absoluteTimerRef.current) {
+          clearTimeout(absoluteTimerRef.current);
+          absoluteTimerRef.current = null;
+        }
+
+        setUser(null);
+
+        if (typeof window !== 'undefined') {
+          if (reason === 'idle') {
+            window.sessionStorage.setItem(
+              'sidra_logout_reason',
+              'You were logged out due to inactivity.',
+            );
+          } else if (reason === 'expired') {
+            window.sessionStorage.setItem(
+              'sidra_logout_reason',
+              'Your session has expired. Please sign in again.',
+            );
+          } else {
+            window.sessionStorage.removeItem('sidra_logout_reason');
+          }
+        }
+
+        // Hard redirect so cached state, refs, listeners are torn down cleanly.
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        } else {
+          router.push('/login');
+        }
+
+        isLoggingOutRef.current = false;
+      }
+    },
+    [router],
+  );
+
+  // Reset the idle-expiry timer. Called on every user activity.
+  const resetIdleTimer = useCallback(() => {
+    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => {
+      if (isLoggingOutRef.current) return;
+      logout('idle');
+    }, IDLE_TIMEOUT_MS);
+  }, [logout]);
+
+  // Bind window-level activity listeners to keep session alive.
+  useEffect(() => {
+    if (!user) {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      if (absoluteTimerRef.current) {
+        clearTimeout(absoluteTimerRef.current);
+        absoluteTimerRef.current = null;
+      }
+      return;
+    }
+
+    const handler = () => resetIdleTimer();
+    ACTIVITY_EVENTS.forEach((evt) =>
+      window.addEventListener(evt, handler, { passive: true }),
+    );
+    resetIdleTimer();
+
+    return () => {
+      ACTIVITY_EVENTS.forEach((evt) => window.removeEventListener(evt, handler));
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [user, resetIdleTimer]);
+
   useEffect(() => {
     const token = api.getAccessToken();
 
@@ -69,17 +194,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshUser]);
 
+  /**
+    Start (or restart) the absolute-expiry timer. Called after every successful
+    login / refresh. After ABSOLUTE_TIMEOUT_MS the user is force-logged out
+    regardless of activity.
+    */
+  const startAbsoluteTimer = useCallback(() => {
+    if (absoluteTimerRef.current) clearTimeout(absoluteTimerRef.current);
+    absoluteTimerRef.current = setTimeout(() => {
+      if (isLoggingOutRef.current) return;
+      logout('expired');
+    }, ABSOLUTE_TIMEOUT_MS);
+  }, [logout]);
+
   const login = useCallback(
     async (email: string, password: string) => {
-      const res = await authApi.login({
-        email,
-        password,
-      });
-
+      const res = await authApi.login({ email, password });
       setUser(res.user);
+      startAbsoluteTimer();
       router.push('/dashboard');
     },
-    [router],
+    [router, startAbsoluteTimer],
   );
 
   /**
@@ -105,51 +240,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         code,
       });
       setUser(res.user);
+      startAbsoluteTimer();
       router.push('/dashboard');
       return { status: 'SUCCESS' as const };
     },
-    [router],
+    [router, startAbsoluteTimer],
   );
 
   const register = useCallback(
     async (email: string, password: string) => {
-      await authApi.register({
-        email,
-        password,
-      });
-
+      await authApi.register({ email, password });
       router.push('/verify-email');
     },
     [router],
   );
-
-  const logout = useCallback(async () => {
-    try {
-      const refreshToken =
-        typeof window !== 'undefined'
-          ? window.localStorage.getItem('sidra_refresh_token')
-          : null;
-
-      if (refreshToken) {
-        await authApi.logout(refreshToken);
-      }
-    } catch {
-      // Ignore logout errors
-    } finally {
-      // Drop the realtime connection so the next user doesn't inherit our
-      // socket identity / room subscriptions.
-      socketManager.disconnect();
-
-      api.setTokens(null);
-
-      if (typeof window !== 'undefined') {
-        window.localStorage.removeItem('sidra_refresh_token');
-      }
-
-      setUser(null);
-      router.push('/login');
-    }
-  }, [router]);
 
   return (
     <AuthContext.Provider

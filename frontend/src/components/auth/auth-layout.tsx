@@ -17,7 +17,7 @@ export function AuthLayout({
             S
           </div>
           <span className="text-xl font-bold tracking-tight">
-            SIDRA<span className="text-sidra-gold"> EXCHANGE</span>
+            LAUNCHMARKET<span className="text-sidra-gold"> CRYPTO EXCHANGE</span>
           </span>
         </Link>
       </header>

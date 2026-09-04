@@ -36,7 +36,7 @@ export class MailerService {
   async sendMail(options: MailOptions): Promise<void> {
     try {
       await this.transporter.sendMail({
-        from: this.configService.get<string>('MAIL_FROM', 'SIDRA Exchange <no-reply@sidra.exchange>'),
+        from: this.configService.get<string>('MAIL_FROM', 'LaunchMarket Crypto Exchange <no-reply@launchmarket.exchange>'),
         to: options.to,
         subject: options.subject,
         html: options.html,
@@ -53,7 +53,7 @@ export class MailerService {
   }
 
   async sendVerificationEmail(to: string, verificationUrl: string): Promise<void> {
-    const appName = this.configService.get<string>('APP_NAME', 'SIDRA Exchange');
+    const appName = this.configService.get<string>('APP_NAME', 'LaunchMarket Crypto Exchange');
     await this.sendMail({
       to,
       subject: `${appName} - Verify your email address`,
@@ -67,7 +67,7 @@ export class MailerService {
   }
 
   async sendPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
-    const appName = this.configService.get<string>('APP_NAME', 'SIDRA Exchange');
+    const appName = this.configService.get<string>('APP_NAME', 'LaunchMarket Crypto Exchange');
     await this.sendMail({
       to,
       subject: `${appName} - Reset your password`,
@@ -81,7 +81,7 @@ export class MailerService {
   }
 
   async sendOtpEmail(to: string, otp: string, purpose: string): Promise<void> {
-    const appName = this.configService.get<string>('APP_NAME', 'SIDRA Exchange');
+    const appName = this.configService.get<string>('APP_NAME', 'LaunchMarket Crypto Exchange');
     await this.sendMail({
       to,
       subject: `${appName} - Your verification code`,
@@ -95,7 +95,7 @@ export class MailerService {
   }
 
   async sendWithdrawalConfirmation(to: string, detailsHtml: string): Promise<void> {
-    const appName = this.configService.get<string>('APP_NAME', 'SIDRA Exchange');
+    const appName = this.configService.get<string>('APP_NAME', 'LaunchMarket Crypto Exchange');
     await this.sendMail({
       to,
       subject: `${appName} - Withdrawal request received`,
@@ -116,7 +116,7 @@ export class MailerService {
     userName?: string;
   }): Promise<void> {
     const { to, subject, title, message, userName } = params;
-    const appName = this.configService.get<string>('APP_NAME', 'SIDRA Exchange');
+    const appName = this.configService.get<string>('APP_NAME', 'LaunchMarket Crypto Exchange');
     await this.sendMail({
       to,
       subject: `${appName} - ${subject}`,
@@ -150,8 +150,8 @@ export class MailerService {
               <tr>
                 <td style="padding:32px 40px;background-color:#0B0E11;border-bottom:1px solid #2B3139;">
                   <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="font-size:22px;font-weight:800;color:#F0B90B;">SIDRA</span>
-                    <span style="font-size:22px;font-weight:800;color:#FFFFFF;">EXCHANGE</span>
+                    <span style="font-size:22px;font-weight:800;color:#F0B90B;">LAUNCHMARKET</span>
+                    <span style="font-size:22px;font-weight:800;color:#FFFFFF;">CRYPTO EXCHANGE</span>
                   </div>
                 </td>
               </tr>
@@ -168,7 +168,7 @@ export class MailerService {
               </tr>
               <tr>
                 <td style="padding:20px 40px;background-color:#0B0E11;border-top:1px solid #2B3139;">
-                  <p style="color:#5E6673;font-size:12px;margin:0;text-align:center;">© ${new Date().getFullYear()} SIDRA Exchange. All rights reserved.</p>
+                  <p style="color:#5E6673;font-size:12px;margin:0;text-align:center;">© ${new Date().getFullYear()} LaunchMarket Crypto Exchange. All rights reserved.</p>
                 </td>
               </tr>
             </table>

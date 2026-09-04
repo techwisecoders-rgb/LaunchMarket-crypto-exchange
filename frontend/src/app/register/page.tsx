@@ -60,7 +60,7 @@ export default function RegisterPage() {
   return (
     <AuthLayout
       title="Create Account"
-      subtitle="Join SIDRA EXCHANGE and start trading on Ethereum Sepolia & Base Sepolia (Testnet)"
+      subtitle="Join LAUNCHMARKET CRYPTO EXCHANGE and start trading on Ethereum Sepolia & Base Sepolia (Testnet)"
     >
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div className="space-y-2">

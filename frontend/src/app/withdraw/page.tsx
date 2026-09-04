@@ -81,7 +81,7 @@ export default function WithdrawPage() {
     mutationFn: ({ requestId, otp }: { requestId: string; otp: string }) =>
       withdrawalsApi.confirmWithdrawal(requestId, otp),
     onSuccess: () => {
-      toast.success('Withdrawal submitted to the blockchain');
+      toast.success('Withdrawal submitted — awaiting admin processing');
       setAwaitingOtp(false);
       setRequestId(null);
       otpForm.reset();

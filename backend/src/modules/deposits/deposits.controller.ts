@@ -11,6 +11,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiBearerAuth,
+  ApiBody,
   ApiQuery,
 } from '@nestjs/swagger';
 import { DepositsService } from './deposits.service';
@@ -20,7 +21,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { BadRequestException } from '@nestjs/common';
-import { IsEnum, IsNotEmpty, IsString, IsUUID } from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength } from 'class-validator';
 
 class GetDepositAddressDto {
   @IsEnum(['ETHEREUM', 'BASE'])
@@ -32,8 +33,17 @@ class GetDepositAddressDto {
 }
 
 class ManualDepositDto {
+  /**
+   * Either `userId` (UUID) OR `email` must be provided.
+   * If both are provided, `userId` takes precedence.
+   */
+  @IsOptional()
   @IsUUID()
-  userId: string;
+  userId?: string;
+
+  @IsOptional()
+  @IsEmail({}, { message: 'Provide a valid email if not using userId' })
+  email?: string;
 
   @IsEnum(['ETHEREUM', 'BASE'])
   chain: 'ETHEREUM' | 'BASE';
@@ -42,21 +52,37 @@ class ManualDepositDto {
   @IsNotEmpty()
   token: string;
 
+  /**
+   * Amount as a decimal string, e.g. "0.05" for 0.05 ETH.
+   * Must be >= the token's `minDeposit` configured in the DB
+   * (default for ETH: 0.001).
+   */
   @IsString()
   @IsNotEmpty()
   amount: string;
 
   @IsString()
   @IsNotEmpty()
+  @Matches(/^0x([A-Fa-f0-9]{64})$/, { message: 'txHash must be a 0x-prefixed 66-char Ethereum transaction hash' })
   txHash: string;
 
   @IsString()
   @IsNotEmpty()
+  @Matches(/^0x([A-Fa-f0-9]{40})$/, { message: 'fromAddress must be a valid 0x-prefixed 42-char EVM address' })
   fromAddress: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  toAddress: string;
+  @Matches(/^0x([A-Fa-f0-9]{40})$/, { message: 'toAddress must be a valid 0x-prefixed 42-char EVM address' })
+  toAddress?: string;
+
+  /**
+   * Optional note/reason — recorded in the AdminLog for audit.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
 }
 
 @ApiTags('deposits')
@@ -141,19 +167,41 @@ export class DepositsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPER_ADMIN')
   @ApiOperation({ summary: 'Manually credit a deposit (admin)' })
+  @ApiBody({
+    schema: {
+      example: {
+        email: 'user@example.com',
+        chain: 'BASE',
+        token: 'ETH',
+        amount: '0.05',
+        txHash: '0xabc...123',
+        fromAddress: '0xYOUR_WALLET_THAT_SENT',
+        toAddress: '0xSIDRA_DEPOSIT_ADDRESS',
+        note: 'Missed by poller due to RPC rate-limit; manual credit.',
+      },
+    },
+  })
   async manualDeposit(
     @CurrentUser('sub') adminId: string,
     @Body() dto: ManualDepositDto,
   ) {
+    if (!dto.userId && !dto.email) {
+      throw new BadRequestException(
+        'Either `userId` (UUID) or `email` must be provided.',
+      );
+    }
+
     return this.depositsService.manualDeposit({
       adminId,
       userId: dto.userId,
+      email: dto.email,
       chain: dto.chain,
       token: dto.token.toUpperCase(),
       amount: dto.amount,
       txHash: dto.txHash,
       fromAddress: dto.fromAddress,
       toAddress: dto.toAddress,
+      note: dto.note,
     });
   }
 }
